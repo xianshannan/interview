@@ -49,7 +49,10 @@ class NPromise {
       // 当前捕捉的错误信息
       this._error = undefined
       // then、catch、finally 的异步回调列队，会依次执行
-      this._callbacQueue = []
+      // 改动点：由于 then、catch 都是返回新的 Promise 所以无需列队执行，只需要 nextCallback
+      // this._callbacQueue = []
+      // 异步 resolve 或者 reject 的处理需要等待 pending 状态转变后才执行下一步的回调
+      this._nextCallback = undefined
       executor(this._onFulfilled, this._onRejected)
     } catch (err) {
       this._onRejected(err)
@@ -69,17 +72,6 @@ class NPromise {
     })
   }
 
-  _runCallbackQueue = () => {
-    if (this._callbacQueue.length > 0) {
-      // resolve 或者 reject 异步运行的时候，this._callbacQueue 的 length 才会大于 0
-      this._callbacQueue.forEach(fn => {
-        fn()
-      })
-      this._callbacQueue = []
-    }
-    this._throwErrorIfNotCatch()
-  }
-
   /**
    * 操作成功
    * @param {Any} value 操作成功传递的值
@@ -90,7 +82,9 @@ class NPromise {
         this._status = FULFILLED
         this._nextValue = value
         this._error = undefined
-        this._runCallbackQueue()
+        // 异步 resolve 的回调执行
+        this._nextCallback && this._nextCallback()
+        this._throwErrorIfNotCatch()
       }
     })
   }
@@ -105,7 +99,9 @@ class NPromise {
         this._status = REJECTED
         this._error = reason
         this._nextValue = undefined
-        this._runCallbackQueue()
+        // 异步 reject 的回调执行
+        this._nextCallback && this._nextCallback()
+        this._throwErrorIfNotCatch()
       }
     })
   }
@@ -148,7 +144,7 @@ class NPromise {
         // 下面是断链的
         // var a = NPromise(...); a.then(...)
         // 当然断链了也可能是 pending 状态
-        this._callbacQueue.push(() => {
+        this._nextCallback = () => {
           // 先使用 setTimeout 代替
           // 保证状态切换为非 PENDING 状态才会执行后续的 then、catch 或者 finally 的回调函数
           handle(this._error)
@@ -156,12 +152,12 @@ class NPromise {
           // 配合 this._throwErrorIfNotCatch 一起使用，
           // 保证执行到最后才抛出错误，如果没有 catch
           this._error = undefined
-        })
+        }
       } else {
         // 断链的情况下，then 回调函数 Promise 的状态为非 pending 状态的场景下
         // 如 var a = NPromise(...);
         // 过了几秒后 a.then(...) 继续链式调用就可能是非 pending 的状态了
-        // 需要立即执行，不需要加入异步列队
+        // 需要立即执行
         handle(this._error)
         // error 已经传递到下一个 NPromise 了，需要重置，否则会打印多个相同错误
         // 配合 this._throwErrorIfNotCatch 一起使用，
